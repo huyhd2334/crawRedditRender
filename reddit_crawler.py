@@ -13,10 +13,10 @@ PASSWORD = "huyhd2334"
 USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 
 SAVE_DIR = "data"
-MAX_AGE = 24*3600   # giữ 24 giờ
+MAX_AGE = 12*3600
 FETCH_DELAY = 5
-CYCLE_DELAY = 90
-SUBREDDIT = "all"  # chọn subreddit nhiều user post
+CYCLE_DELAY = 180
+SUBREDDIT = "all"  # chọn subreddit
 MAX_USERS = 5
 
 class RedditCrawler:
