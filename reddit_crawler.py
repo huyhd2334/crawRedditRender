@@ -211,7 +211,6 @@ class RedditCrawler:
         self.log(f"Đã lưu xong user {username}")
 
     def export_sql(self):
-        """Xuất DB thành file .sql để render"""
         conn = sqlite3.connect(DB_PATH)
         with open(SQL_EXPORT, "w", encoding="utf-8") as f:
             for line in conn.iterdump():
