@@ -1,50 +1,62 @@
 import requests
+from requests.auth import HTTPBasicAuth
+from datetime import datetime, timezone, timedelta
 import time
 import os
 import json
-from requests.auth import HTTPBasicAuth
-from datetime import datetime, timezone, timedelta
+from termcolor import colored
 
-# ---------------- Config Reddit ----------------
-CLIENT_ID = "YOUR_CLIENT_ID"
-SECRET = "YOUR_SECRET"
-USERNAME = "YOUR_REDDIT_USERNAME"
-PASSWORD = "YOUR_REDDIT_PASSWORD"
-USER_AGENT = "RedditCrawler/1.0 by u/YOUR_REDDIT_USERNAME"
+# ======== Cấu hình ========
+CLIENT_ID = "YBWuJ69UdK3y80J9q71rUQ"
+SECRET = "eukvQu10HoBCNS28yM5sbQvl-JVl6Q"
+USERNAME = "Creative-Umpire1404"
+PASSWORD = "huyhd2334"
+USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 
-# ---------------- Folder lưu file ----------------
 SAVE_DIR = "data"
-os.makedirs(SAVE_DIR, exist_ok=True)
+MAX_AGE = 24 * 3600
+NUMBER_RETRY = 3
+FETCH_DELAY = 5
+CYCLE_DELAY = 90
 
-# ---------------- Crawler class ----------------
 class RedditCrawler:
     def __init__(self):
-        self.auth = HTTPBasicAuth(CLIENT_ID, SECRET)
-        self.data = {
-            "grant_type": "password",
-            "username": USERNAME,
-            "password": PASSWORD
-        }
+        os.makedirs(SAVE_DIR, exist_ok=True)
+        self.__auth = HTTPBasicAuth(CLIENT_ID, SECRET)
+        self.__data = {"grant_type": "password", "username": USERNAME, "password": PASSWORD}
         self._get_token()
+        self.__count_time_404 = 0
+
+    def log(self, msg, level="info"):
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        prefix = colored(f"[{now_str}]", "yellow")
+        if level == "error":
+            print(prefix, colored(msg, "red"))
+        else:
+            print(prefix, colored(msg, "green"))
 
     def _get_token(self):
         while True:
-            res = requests.post(
-                "https://www.reddit.com/api/v1/access_token",
-                auth=self.auth,
-                data=self.data,
-                headers={"User-Agent": USER_AGENT}
-            )
-            if res.status_code == 200:
-                self.token = res.json()["access_token"]
-                self.headers = {"Authorization": f"bearer {self.token}", "User-Agent": USER_AGENT}
-                print("Access token received.")
+            try:
+                res = requests.post(
+                    "https://www.reddit.com/api/v1/access_token",
+                    auth=self.__auth,
+                    data=self.__data,
+                    headers={"User-Agent": USER_AGENT}
+                )
+                if res.status_code != 200:
+                    self.log(f"Token error: {res.status_code}", "error")
+                    time.sleep(60)
+                    continue
+                self.__token = res.json()["access_token"]
+                self.__headers = {"Authorization": f"bearer {self.__token}", "User-Agent": USER_AGENT}
+                self.log("Access token received.")
                 break
-            else:
-                print(f"Token error: {res.status_code}, retrying in 10s")
-                time.sleep(10)
+            except Exception as e:
+                self.log(f"Token error: {e}", "error")
+                time.sleep(30)
 
-    def _fetch_user_content(self, username, kind="submitted", limit=100):
+    def _fetch_user_content(self, username, kind="submitted", limit=1000):
         url = f"https://oauth.reddit.com/user/{username}/{kind}.json"
         all_items = []
         after = None
@@ -54,60 +66,86 @@ class RedditCrawler:
             if after:
                 params["after"] = after
 
-            r = requests.get(url, headers=self.headers, params=params)
-            if r.status_code != 200:
-                if r.status_code == 401:  # token hết hạn
-                    self._get_token()
-                    continue
-                else:
-                    break
+            try:
+                r = requests.get(url, headers=self.__headers, params=params)
+            except Exception as e:
+                self.log(e, "error")
+                break
 
-            children = r.json()["data"]["children"]
+            if r.status_code != 200:
+                self.log(f"{r.status_code} {r.text}", "error")
+                if r.status_code == 401:
+                    self._get_token()
+                elif r.status_code == 404:
+                    break
+                time.sleep(10)
+                continue
+
+            data = r.json()["data"]
+            children = data["children"]
             if not children:
                 break
 
             all_items.extend(children)
-            after = r.json()["data"].get("after")
+            after = data.get("after")
             if not after or len(all_items) >= limit:
                 break
 
         return all_items
 
     def get_user_data(self, username):
+        self.log(f"Getting data of {username} ...")
+
+        # --- Xoá file cũ quá tuổi ---
+        for f in os.listdir(SAVE_DIR):
+            path = os.path.join(SAVE_DIR, f)
+            if os.path.isfile(path) and time.time() - os.path.getmtime(path) > MAX_AGE:
+                os.remove(path)
+
         user_data = {
             "username": username,
             "posts": self._fetch_user_content(username, "submitted"),
-            "comments": self._fetch_user_content(username, "comments")
+            "comments": self._fetch_user_content(username, "comments"),
         }
 
+        # Lưu JSON
         file_path = os.path.join(SAVE_DIR, f"user_{username}.json")
         with open(file_path, "w", encoding="utf-8") as f:
             json.dump(user_data, f, ensure_ascii=False, indent=4)
-        print(f"Saved {username}.json")
+
+        self.log(f"Saved data for {username} → {file_path}")
 
     def fetch_users_from_subreddit(self, max_users=5, subreddit="all"):
         url = f"https://oauth.reddit.com/r/{subreddit}/new.json"
         users = set()
 
         while len(users) < max_users:
-            r = requests.get(url, headers=self.headers, params={"limit": 100})
-            if r.status_code != 200:
+            try:
+                r = requests.get(url, headers=self.__headers, params={"limit": 100})
+            except Exception as e:
+                self.log(e, "error")
                 time.sleep(10)
                 continue
 
-            for post in r.json()["data"]["children"]:
-                author = post["data"]["author"]
+            if r.status_code != 200:
+                self.log(f"{r.status_code} {r.text}", "error")
+                time.sleep(30)
+                continue
+
+            for child in r.json()["data"]["children"]:
+                author = child["data"]["author"]
                 if author not in ("[deleted]", "AutoModerator") and author not in users:
                     users.add(author)
                     self.get_user_data(author)
                     if len(users) >= max_users:
                         break
 
-            time.sleep(5)  # delay giữa các request
+            time.sleep(FETCH_DELAY)
 
-# ---------------- Main ----------------
+        self.log(f"Done fetching {len(users)} users!")
+
 if __name__ == "__main__":
     crawler = RedditCrawler()
     while True:
         crawler.fetch_users_from_subreddit(max_users=5)
-        time.sleep(90)  # pause trước khi crawl tiếp
+        time.sleep(CYCLE_DELAY)
