@@ -6,8 +6,8 @@ import os
 import json
 
 # ===== Cấu hình =====
-CLIENT_ID = "YBWuJ69UdK3y80J9q71rUQ"
-SECRET = "eukvQu10HoBCNS28yM5sbQvl-JVl6Q"
+CLIENT_ID = "_ZEYwc8FsUUF5MZipFMGzQ"
+SECRET = "lyC23drNrBY9rQ-7EUlYIxpYjabQvQ"
 USERNAME = "Creative-Umpire1404"
 PASSWORD = "huyhd2334"
 USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
