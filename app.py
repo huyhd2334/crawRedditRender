@@ -3,13 +3,18 @@ import os
 import json
 import sqlite3
 from datetime import datetime
+import io
 
 app = Flask(__name__)
+
+# ======================
+# Đường dẫn dữ liệu
+# ======================
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 DB_PATH = os.path.join(DATA_DIR, "data.db")
 
 # ======================
-# HTML Templates
+# HTML Giao diện chính
 # ======================
 
 INDEX_HTML = """
@@ -17,7 +22,7 @@ INDEX_HTML = """
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Reddit Crawler Data</title>
+  <title>Reddit Crawler Data Explorer</title>
   <style>
     body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; }
     h1 { color: #333; }
@@ -26,10 +31,11 @@ INDEX_HTML = """
     th, td { padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; }
     .mono { font-family: monospace; color:#444; }
     .small { color:#666; font-size:0.9em; }
+    .btn { background: #1a73e8; color:white; padding:6px 10px; border-radius:4px; text-decoration:none; }
   </style>
 </head>
 <body>
-  <h1>Reddit Crawler — Data Explorer</h1>
+  <h1>📊 Reddit Crawler — Data Explorer</h1>
 
   <h2>📁 JSON Files</h2>
   {% if json_files %}
@@ -43,8 +49,8 @@ INDEX_HTML = """
           <td class="mono">{{ f.filename }}</td>
           <td class="small">{{ f.mtime }}</td>
           <td>
-            <a href="/view/{{ f.filename }}">View</a> |
-            <a href="/download/{{ f.filename }}">Download</a>
+            <a href="/view/{{ f.filename }}">👁 View</a> |
+            <a href="/download/{{ f.filename }}">⬇ Download</a>
           </td>
         </tr>
       {% endfor %}
@@ -63,12 +69,21 @@ INDEX_HTML = """
         <li><a href="/table/{{ t }}">{{ t }}</a></li>
       {% endfor %}
     </ul>
+
+    <p>
+      <a href="/download_db" class="btn">⬇ Download Database (.db)</a>
+      <a href="/export_sql" class="btn">📝 Export SQL Dump</a>
+    </p>
   {% else %}
     <p>No SQLite database found at <code>{{ db_path }}</code>.</p>
   {% endif %}
 </body>
 </html>
 """
+
+# ======================
+# HTML xem file JSON
+# ======================
 
 VIEW_HTML = """
 <!doctype html>
@@ -88,6 +103,10 @@ VIEW_HTML = """
 </body>
 </html>
 """
+
+# ======================
+# HTML hiển thị bảng SQLite
+# ======================
 
 TABLE_HTML = """
 <!doctype html>
@@ -133,11 +152,11 @@ TABLE_HTML = """
 """
 
 # ======================
-# Utility functions
+# Helper Functions
 # ======================
 
 def list_data_files():
-    """Trả về danh sách file JSON trong thư mục data"""
+    """Trả về danh sách file JSON"""
     if not os.path.isdir(DATA_DIR):
         return []
     items = []
@@ -145,8 +164,6 @@ def list_data_files():
         if not name.lower().endswith(".json"):
             continue
         path = os.path.join(DATA_DIR, name)
-        if not os.path.isfile(path):
-            continue
         stat = os.stat(path)
         mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
         username = name
@@ -157,14 +174,13 @@ def list_data_files():
     return items
 
 def list_tables():
-    """Trả về danh sách bảng trong SQLite nếu có"""
+    """Trả về danh sách bảng trong SQLite"""
     if not os.path.isfile(DB_PATH):
         return []
     with sqlite3.connect(DB_PATH) as conn:
         cur = conn.cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = [r[0] for r in cur.fetchall()]
-    return tables
+        return [r[0] for r in cur.fetchall()]
 
 # ======================
 # Routes
@@ -198,7 +214,7 @@ def download_file(filename):
 @app.route("/table/<table>")
 def show_table(table):
     if not os.path.isfile(DB_PATH):
-        return f"No database file found at {DB_PATH}", 404
+        abort(404)
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
@@ -211,32 +227,33 @@ def show_table(table):
     return render_template_string(TABLE_HTML, table=table, columns=columns, rows=rows)
 
 # ======================
-# Main
+# Download / Export DB
 # ======================
+
 @app.route("/download_db")
 def download_db():
-    """Tải trực tiếp file SQLite"""
+    """Tải file SQLite"""
     if not os.path.isfile(DB_PATH):
         abort(404)
     return send_from_directory(DATA_DIR, os.path.basename(DB_PATH), as_attachment=True)
 
 @app.route("/export_sql")
 def export_sql():
-    """Xuất toàn bộ database thành file .sql (dump text)"""
+    """Xuất toàn bộ database thành file .sql"""
     if not os.path.isfile(DB_PATH):
         abort(404)
-    import io
     buf = io.StringIO()
     with sqlite3.connect(DB_PATH) as conn:
         for line in conn.iterdump():
             buf.write(f"{line}\n")
-    content = buf.getvalue()
-    buf.close()
-    # Lưu tạm để tải
     sql_path = os.path.join(DATA_DIR, "export.sql")
     with open(sql_path, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(buf.getvalue())
     return send_from_directory(DATA_DIR, "export.sql", as_attachment=True)
+
+# ======================
+# Main
+# ======================
 
 if __name__ == "__main__":
     os.makedirs(DATA_DIR, exist_ok=True)
