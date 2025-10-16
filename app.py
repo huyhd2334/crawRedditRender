@@ -6,7 +6,7 @@ from datetime import datetime
 app = Flask(__name__)
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 
-# Simple HTML template (inline) - shows numbered list, view/download links
+# HTML template hiển thị danh sách người dùng
 INDEX_HTML = """
 <!doctype html>
 <html>
@@ -32,9 +32,9 @@ INDEX_HTML = """
   <table>
     <thead><tr><th>#</th><th>User</th><th>File</th><th>Created</th><th>Actions</th></tr></thead>
     <tbody>
-    {% for i,f in enumerate(files, start=1) %}
+    {% for f in files %}
       <tr>
-        <td>{{ i }}</td>
+        <td>{{ loop.index }}</td>
         <td>{{ f.username }}</td>
         <td class="mono">{{ f.filename }}</td>
         <td class="small">{{ f.mtime }}</td>
@@ -55,7 +55,7 @@ INDEX_HTML = """
 </html>
 """
 
-# Pretty JSON viewer template
+# Template hiển thị nội dung JSON đẹp
 VIEW_HTML = """
 <!doctype html>
 <html>
@@ -76,7 +76,7 @@ VIEW_HTML = """
 """
 
 def list_data_files():
-    """Return list of dicts: {filename, username, mtime} sorted by mtime desc"""
+    """Trả về danh sách dict: {filename, username, mtime} theo thời gian chỉnh sửa mới nhất"""
     if not os.path.isdir(DATA_DIR):
         return []
     items = []
@@ -88,12 +88,10 @@ def list_data_files():
             continue
         stat = os.stat(path)
         mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-        # assume filename pattern user_<username>.json
         username = name
         if name.startswith("user_") and name.endswith(".json"):
             username = name[len("user_"):-len(".json")]
         items.append({"filename": name, "username": username, "mtime": mtime})
-    # sort newest first
     items.sort(key=lambda x: x["mtime"], reverse=True)
     return items
 
@@ -119,10 +117,8 @@ def view_file(filename):
 @app.route("/download/<filename>")
 def download_file(filename):
     safe = os.path.basename(filename)
-    # send_from_directory accepts directory and filename
     return send_from_directory(DATA_DIR, safe, as_attachment=True)
 
 if __name__ == "__main__":
-    # ensure data dir exists
     os.makedirs(DATA_DIR, exist_ok=True)
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
