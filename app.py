@@ -1,32 +1,43 @@
-from flask import Flask, send_from_directory, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
-from reddit_crawler import RedditCrawler
+from flask import Flask, send_from_directory, render_template_string
 import os
 
 SAVE_DIR = "data"
 app = Flask(__name__)
-crawler = RedditCrawler()
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(crawler.fetch_users_from_subreddit, 'interval', minutes=4)   # crawl 50 user mỗi 4 phút
-scheduler.add_job(crawler.export_sql, 'interval', hours=12)                    # xuất SQL mới mỗi 12 giờ
-scheduler.start()
 
 @app.route("/")
 def home():
-    html = """
-    <div style='text-align:center;'>
-        <h2>Reddit SQL Exporter</h2>
-        <p>Hệ thống tự crawl và lưu dữ liệu Reddit.</p>
-        <a href='/list_files'>Xem file SQL</a>
-    </div>
-    """
-    return html
-
-@app.route("/list_files")
-def list_files():
     files = [f for f in os.listdir(SAVE_DIR) if f.endswith(".sql")]
-    return jsonify(sorted(files, reverse=True))
+    files.sort(reverse=True)
+    
+    html = """
+    <html>
+    <head>
+        <title>Reddit SQL Exporter</title>
+        <style>
+            body { font-family: Arial; text-align: center; margin: 40px; }
+            table { margin: 0 auto; border-collapse: collapse; }
+            th, td { border: 1px solid #ccc; padding: 8px 12px; }
+            th { background-color: #f2f2f2; }
+            a { text-decoration: none; color: #007BFF; }
+            a:hover { text-decoration: underline; }
+        </style>
+    </head>
+    <body>
+        <h2>Reddit SQL Exporter</h2>
+        <p>Hệ thống tự crawl và lưu dữ liệu Reddit. Click để tải file SQL.</p>
+        <table>
+            <tr><th>File SQL</th><th>Download</th></tr>
+            {% for f in files %}
+            <tr>
+                <td>{{ f }}</td>
+                <td><a href="/download/{{ f }}">Tải xuống</a></td>
+            </tr>
+            {% endfor %}
+        </table>
+    </body>
+    </html>
+    """
+    return render_template_string(html, files=files)
 
 @app.route("/download/<filename>")
 def download_file(filename):
