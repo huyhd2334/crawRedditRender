@@ -14,31 +14,27 @@ USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 
 SAVE_DIR = "data"
 DB_PATH = os.path.join(SAVE_DIR, "reddit_data.db")
-SQL_EXPORT = os.path.join(SAVE_DIR, "reddit_data.sql")
 
 MAX_USERS = 50
 SUBREDDIT = "all"
 FETCH_DELAY = 5
-CYCLE_DELAY = 90
 
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 class RedditCrawler:
     def __init__(self):
-        os.makedirs(SAVE_DIR, exist_ok=True)
         self.auth = HTTPBasicAuth(CLIENT_ID, SECRET)
         self.data = {"grant_type": "password", "username": USERNAME, "password": PASSWORD}
         self.token = None
         self.headers = None
         self.get_token()
         self.setup_database()
-        
 
     def log(self, msg):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{now}] {msg}")
 
     def get_token(self):
-        """Lấy access token từ Reddit API"""
         while True:
             try:
                 r = requests.post(
@@ -60,10 +56,8 @@ class RedditCrawler:
                 time.sleep(30)
 
     def setup_database(self):
-        """Tạo 4 bảng chính"""
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
-
         cur.executescript("""
         CREATE TABLE IF NOT EXISTS r_user (
             username TEXT PRIMARY KEY,
@@ -73,7 +67,6 @@ class RedditCrawler:
             premium INTEGER NOT NULL,
             verified_email INTEGER NOT NULL
         );
-
         CREATE TABLE IF NOT EXISTS post (
             id TEXT PRIMARY KEY,
             subreddit TEXT NOT NULL,
@@ -85,7 +78,6 @@ class RedditCrawler:
             username TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
-
         CREATE TABLE IF NOT EXISTS comment (
             id TEXT PRIMARY KEY,
             body TEXT NOT NULL,
@@ -95,7 +87,6 @@ class RedditCrawler:
             username TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
-
         CREATE TABLE IF NOT EXISTS achievement (
             username TEXT NOT NULL,
             achievement_name TEXT NOT NULL,
@@ -107,7 +98,6 @@ class RedditCrawler:
         conn.close()
 
     def fetch_user_info(self, username):
-        """Lấy thông tin user"""
         url = f"https://oauth.reddit.com/user/{username}/about"
         r = requests.get(url, headers=self.headers)
         if r.status_code != 200:
@@ -123,10 +113,8 @@ class RedditCrawler:
         }
 
     def fetch_user_content(self, username, kind="submitted", limit=50):
-        """Lấy bài post hoặc comment"""
         url = f"https://oauth.reddit.com/user/{username}/{kind}.json"
-        items = []
-        after = None
+        items, after = [], None
         while len(items) < limit:
             params = {"limit": 25}
             if after:
@@ -139,21 +127,15 @@ class RedditCrawler:
                 d = child["data"]
                 if kind == "submitted":
                     items.append({
-                        "id": d["id"],
-                        "subreddit": d["subreddit"],
-                        "title": d["title"],
-                        "content": d.get("selftext", ""),
+                        "id": d["id"], "subreddit": d["subreddit"],
+                        "title": d["title"], "content": d.get("selftext", ""),
                         "p_url": f"https://reddit.com{d['permalink']}",
-                        "score": d["score"],
-                        "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat(),
+                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
                     })
                 else:
                     items.append({
-                        "id": d["id"],
-                        "body": d["body"],
-                        "subreddit": d["subreddit"],
-                        "score": d["score"],
-                        "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat(),
+                        "id": d["id"], "body": d["body"], "subreddit": d["subreddit"],
+                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
                     })
             after = data.get("after")
             if not after:
@@ -161,77 +143,43 @@ class RedditCrawler:
         return items
 
     def save_user(self, username):
-        """Lưu user + post + comment"""
         user = self.fetch_user_info(username)
         if not user:
             return
-
         posts = self.fetch_user_content(username, "submitted", 30)
         comments = self.fetch_user_content(username, "comments", 30)
 
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
-
-        # user
         cur.execute("""
             INSERT OR REPLACE INTO r_user (username, link_karma, comment_karma, created, premium, verified_email)
             VALUES (?, ?, ?, ?, ?, ?)
-        """, (
-            user["username"], user["link_karma"], user["comment_karma"],
-            user["created"], user["premium"], user["verified_email"]
-        ))
-
-        # posts
+        """, (user["username"], user["link_karma"], user["comment_karma"],
+              user["created"], user["premium"], user["verified_email"]))
         for p in posts:
             cur.execute("""
                 INSERT OR REPLACE INTO post (id, subreddit, title, content, p_url, score, created, username)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (p["id"], p["subreddit"], p["title"], p["content"], p["p_url"],
                   p["score"], p["created"], username))
-
-        # comments
         for c in comments:
             cur.execute("""
                 INSERT OR REPLACE INTO comment (id, body, subreddit, score, created, username)
                 VALUES (?, ?, ?, ?, ?, ?)
             """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], username))
-
         conn.commit()
         conn.close()
-        self.log(f"Đã lưu user {username}")
-
-    def export_sql(self):
-        """Xuất database thành file .sql mới mỗi 12h"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        filename = f"reddit_data_{timestamp}.sql"
-        path = os.path.join(SAVE_DIR, filename)
-
-        conn = sqlite3.connect(DB_PATH)
-        with open(path, "w", encoding="utf-8") as f:
-            for line in conn.iterdump():
-                f.write(f"{line}\n")
-        conn.close()
-
-        self.log(f"📦 Đã xuất file SQL mới: {filename}")
+        self.log(f"✅ Lưu user {username}")
 
     def fetch_users_from_subreddit(self):
-        """Crawl user từ subreddit"""
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
-
         while len(users) < MAX_USERS:
-            try:
-                r = requests.get(url, headers=self.headers, params={"limit": 100})
-            except Exception as e:
-                self.log(f"Lỗi khi tải subreddit: {e}")
-                time.sleep(10)
-                continue
-
+            r = requests.get(url, headers=self.headers, params={"limit": 100})
             if r.status_code != 200:
-                self.log(f"Lỗi {r.status_code}, chờ 30s")
+                self.log(f"Lỗi {r.status_code}, đợi 30s")
                 time.sleep(30)
                 continue
-
             for child in r.json()["data"]["children"]:
                 author = child["data"]["author"]
                 if author not in ("[deleted]", "AutoModerator") and author not in users:
@@ -241,6 +189,15 @@ class RedditCrawler:
                     if len(users) >= MAX_USERS:
                         break
             time.sleep(FETCH_DELAY)
-
-        self.export_sql()
         self.log(f"✅ Hoàn thành crawl {len(users)} users.")
+
+    def export_sql(self):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        filename = f"reddit_data_{timestamp}.sql"
+        path = os.path.join(SAVE_DIR, filename)
+        conn = sqlite3.connect(DB_PATH)
+        with open(path, "w", encoding="utf-8") as f:
+            for line in conn.iterdump():
+                f.write(f"{line}\n")
+        conn.close()
+        self.log(f"📦 Đã xuất file SQL mới: {filename}")
