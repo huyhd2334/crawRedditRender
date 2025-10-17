@@ -1,6 +1,6 @@
 import requests
 from requests.auth import HTTPBasicAuth
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import os
 import sqlite3
@@ -12,9 +12,9 @@ USERNAME = "Creative-Umpire1404"
 PASSWORD = "huyhd2334"
 USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 
-MAX_USERS = 100          # Mỗi batch crawl 100 user
+MAX_USERS = 100          # Mỗi batch lấy 100 user
 SUBREDDIT = "all"
-FETCH_DELAY = 2          # Delay mỗi user
+FETCH_DELAY = 1          # Delay giữa các user
 
 class RedditCrawler:
     def __init__(self):
@@ -22,7 +22,6 @@ class RedditCrawler:
         self.data = {"grant_type": "password", "username": USERNAME, "password": PASSWORD}
         self.token = None
         self.headers = None
-        self.user_count = 0
         self.get_token()
 
     def log(self, msg):
@@ -115,21 +114,15 @@ class RedditCrawler:
                 d = child["data"]
                 if kind == "submitted":
                     items.append({
-                        "id": d["id"],
-                        "subreddit": d["subreddit"],
-                        "title": d["title"],
-                        "content": d.get("selftext", ""),
+                        "id": d["id"], "subreddit": d["subreddit"],
+                        "title": d["title"], "content": d.get("selftext", ""),
                         "p_url": f"https://reddit.com{d['permalink']}",
-                        "score": d["score"],
-                        "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
+                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
                     })
                 else:
                     items.append({
-                        "id": d["id"],
-                        "body": d["body"],
-                        "subreddit": d["subreddit"],
-                        "score": d["score"],
-                        "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
+                        "id": d["id"], "body": d["body"], "subreddit": d["subreddit"],
+                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
                     })
             after = data.get("after")
             if not after:
@@ -162,20 +155,19 @@ class RedditCrawler:
             """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], username))
         conn.commit()
         conn.close()
-        self.user_count += 1
-        self.log(f"✅ [{self.user_count}/{MAX_USERS}] Đã lưu user: {username}")
 
-    def fetch_users_from_subreddit(self, save_dir="data"):
-        self.user_count = 0
+    def fetch_users_from_subreddit(self, save_dir):
         db_path = os.path.join(save_dir, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
         self.setup_database(db_path)
+        self.log(f"📁 Tạo DB mới: {db_path}")
+
+        user_count = 0
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
-
         while len(users) < MAX_USERS:
             r = requests.get(url, headers=self.headers, params={"limit": 100})
             if r.status_code != 200:
-                self.log(f"Lỗi {r.status_code}, đợi 30s...")
+                self.log(f"Lỗi {r.status_code}, đợi 30s")
                 time.sleep(30)
                 continue
             for child in r.json()["data"]["children"]:
@@ -183,8 +175,9 @@ class RedditCrawler:
                 if author not in ("[deleted]", "AutoModerator") and author not in users:
                     users.add(author)
                     self.save_user(author, db_path)
+                    user_count += 1
                     if len(users) >= MAX_USERS:
-                        self.log(f"🎯 Hoàn thành crawl {len(users)} users.")
+                        self.log(f"🎯 Hoàn thành crawl {len(users)} user.")
                         self.log(f"💾 Dữ liệu lưu trong {db_path}")
-                        return db_path
+                        return
             time.sleep(FETCH_DELAY)

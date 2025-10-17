@@ -12,37 +12,36 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 app = Flask(__name__)
 crawler = RedditCrawler()
 
-# ===== Hàm xóa DB cũ =====
-def cleanup_old_db(save_dir):
+# ===== Xóa DB cũ > 6h =====
+def cleanup_old_db():
     now = datetime.now()
-    for f in os.listdir(save_dir):
+    for f in os.listdir(SAVE_DIR):
         if f.endswith(".db"):
-            path = os.path.join(save_dir, f)
+            path = os.path.join(SAVE_DIR, f)
             if now - datetime.fromtimestamp(os.path.getmtime(path)) > timedelta(hours=DELETE_AFTER_HOURS):
                 os.remove(path)
-                print(f"[{datetime.now()}] 🗑️ Xóa file cũ: {f}", flush=True)
+                print(f"[{datetime.now()}] 🗑️ Xóa DB cũ: {f}", flush=True)
 
-# ===== Thread crawl batch đầu tiên =====
-def start_crawler():
+# ===== Thread crawl batch đầu tiên ngay khi start Flask =====
+def start_first_batch():
     crawler.log("🚀 Bắt đầu crawl batch đầu tiên...")
     crawler.fetch_users_from_subreddit(SAVE_DIR)
-    crawler.log("✅ Hoàn thành batch đầu tiên, tiếp tục chạy định kỳ mỗi 6h.")
+    crawler.log("✅ Hoàn thành batch đầu tiên. Tiếp tục crawl theo lịch 5 phút/lần.")
 
-threading.Thread(target=start_crawler, daemon=True).start()
+threading.Thread(target=start_first_batch, daemon=True).start()
 
 # ===== Scheduler định kỳ =====
 scheduler = BackgroundScheduler()
-scheduler.add_job(lambda: crawler.fetch_users_from_subreddit(SAVE_DIR), 'interval', hours=6)
-scheduler.add_job(lambda: cleanup_old_db(SAVE_DIR), 'interval', minutes=5)
+scheduler.add_job(lambda: crawler.fetch_users_from_subreddit(SAVE_DIR), 'interval', minutes=5)
+scheduler.add_job(cleanup_old_db, 'interval', minutes=5)
 scheduler.start()
 
-# ===== Flask Routes =====
+# ===== Routes =====
 @app.route("/")
 def home():
-    files = [f for f in os.listdir(SAVE_DIR) if f.endswith(".db")]
-    files = sorted(files, reverse=True)
+    files = sorted([f for f in os.listdir(SAVE_DIR) if f.endswith(".db")], reverse=True)
     if not files:
-        return "<h2>📊 Chưa có dữ liệu nào được crawl. Hệ thống đang khởi động...</h2>"
+        return "<h2>📊 Chưa có dữ liệu nào. Hệ thống đang khởi động...</h2>"
     file_links = "".join([f"<li>{f} <a href='/download/{f}'>⬇️ Download</a></li>" for f in files])
     return f"""
     <div style='text-align:center;'>
