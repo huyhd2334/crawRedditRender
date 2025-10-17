@@ -187,10 +187,10 @@ class RedditCrawler:
                     self.log(f"Đang crawl user: {author}")
                     self.save_user(author)
                     if len(users) >= MAX_USERS:
-                        break
+                        self.log(f"✅ Hoàn thành crawl {len(users)} users.")
+                        self.export_sql()
+                        return  # hoặc: users = set() nếu muốn crawl batch tiếp theo
             time.sleep(FETCH_DELAY)
-        self.log(f"✅ Hoàn thành crawl {len(users)} users.")
-        self.export_sql()
 
     def export_sql(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
