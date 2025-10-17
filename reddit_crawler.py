@@ -1,9 +1,10 @@
 import requests
 from requests.auth import HTTPBasicAuth
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
 import os
 import sqlite3
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # ===== Cấu hình =====
 CLIENT_ID = "_ZEYwc8FsUUF5MZipFMGzQ"
@@ -15,11 +16,13 @@ USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 SAVE_DIR = "data"
 DB_PATH = os.path.join(SAVE_DIR, "reddit_data.db")
 
-MAX_USERS = 100
+MAX_USERS = 100          # Mỗi lần lấy 100 user
 SUBREDDIT = "all"
-FETCH_DELAY = 5
+FETCH_DELAY = 5          # Delay mỗi user
+DELETE_AFTER_HOURS = 8   # Xóa sau 8 tiếng
 
 os.makedirs(SAVE_DIR, exist_ok=True)
+
 
 class RedditCrawler:
     def __init__(self):
@@ -29,11 +32,10 @@ class RedditCrawler:
         self.headers = None
         self.get_token()
         self.setup_database()
-        self.user_count = 0  # Đếm số user đã load
+        self.user_count = 0
 
     def log(self, msg):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{now}] {msg}", flush=True)
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
     def get_token(self):
         while True:
@@ -62,30 +64,30 @@ class RedditCrawler:
         cur.executescript("""
         CREATE TABLE IF NOT EXISTS r_user (
             username TEXT PRIMARY KEY,
-            link_karma INTEGER NOT NULL,
-            comment_karma INTEGER NOT NULL,
-            created TEXT NOT NULL,
-            premium INTEGER NOT NULL,
-            verified_email INTEGER NOT NULL
+            link_karma INTEGER,
+            comment_karma INTEGER,
+            created TEXT,
+            premium INTEGER,
+            verified_email INTEGER
         );
         CREATE TABLE IF NOT EXISTS post (
             id TEXT PRIMARY KEY,
-            subreddit TEXT NOT NULL,
-            title TEXT NOT NULL,
+            subreddit TEXT,
+            title TEXT,
             content TEXT,
-            p_url TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            created TEXT NOT NULL,
-            username TEXT NOT NULL,
+            p_url TEXT,
+            score INTEGER,
+            created TEXT,
+            username TEXT,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
         CREATE TABLE IF NOT EXISTS comment (
             id TEXT PRIMARY KEY,
-            body TEXT NOT NULL,
-            subreddit TEXT NOT NULL,
-            score INTEGER NOT NULL,
-            created TEXT NOT NULL,
-            username TEXT NOT NULL,
+            body TEXT,
+            subreddit TEXT,
+            score INTEGER,
+            created TEXT,
+            username TEXT,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
         """)
@@ -149,20 +151,17 @@ class RedditCrawler:
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
         cur.execute("""
-            INSERT OR REPLACE INTO r_user (username, link_karma, comment_karma, created, premium, verified_email)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT OR REPLACE INTO r_user VALUES (?, ?, ?, ?, ?, ?)
         """, (user["username"], user["link_karma"], user["comment_karma"],
               user["created"], user["premium"], user["verified_email"]))
         for p in posts:
             cur.execute("""
-                INSERT OR REPLACE INTO post (id, subreddit, title, content, p_url, score, created, username)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO post VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (p["id"], p["subreddit"], p["title"], p["content"], p["p_url"],
                   p["score"], p["created"], username))
         for c in comments:
             cur.execute("""
-                INSERT OR REPLACE INTO comment (id, body, subreddit, score, created, username)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO comment VALUES (?, ?, ?, ?, ?, ?)
             """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], username))
         conn.commit()
         conn.close()
@@ -171,6 +170,7 @@ class RedditCrawler:
         self.log(f"✅ [{self.user_count}/{MAX_USERS}] Đã lưu user: {username}")
 
     def fetch_users_from_subreddit(self):
+        self.user_count = 0
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
         while len(users) < MAX_USERS:
@@ -190,6 +190,24 @@ class RedditCrawler:
                         return
             time.sleep(FETCH_DELAY)
 
+# ===== Dọn file cũ sau 8h =====
+def cleanup_old_db():
+    now = datetime.now()
+    for f in os.listdir(SAVE_DIR):
+        if f.endswith(".db"):
+            path = os.path.join(SAVE_DIR, f)
+            if now - datetime.fromtimestamp(os.path.getmtime(path)) > timedelta(hours=DELETE_AFTER_HOURS):
+                os.remove(path)
+                print(f"[{datetime.now()}] 🗑️ Xóa file cũ: {f}", flush=True)
+
+# ===== Chạy định kỳ mỗi 5 phút =====
 if __name__ == "__main__":
     crawler = RedditCrawler()
-    crawler.fetch_users_from_subreddit()
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(crawler.fetch_users_from_subreddit, "interval", minutes=5)
+    scheduler.add_job(cleanup_old_db, "interval", hours=1)
+    scheduler.start()
+
+    print(f"[{datetime.now()}] 🚀 Bắt đầu chạy RedditCrawler")
+    while True:
+        time.sleep(60)
