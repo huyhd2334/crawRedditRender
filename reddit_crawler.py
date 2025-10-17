@@ -4,8 +4,6 @@ from datetime import datetime, timedelta
 import time
 import os
 import sqlite3
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
 
 # ===== Cấu hình =====
 CLIENT_ID = "_ZEYwc8FsUUF5MZipFMGzQ"
@@ -14,16 +12,9 @@ USERNAME = "Creative-Umpire1404"
 PASSWORD = "huyhd2334"
 USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 
-SAVE_DIR = "data"
-DB_PATH = os.path.join(SAVE_DIR, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
-
-MAX_USERS = 100          # Mỗi lần lấy 100 user
+MAX_USERS = 100          # Mỗi batch crawl 100 user
 SUBREDDIT = "all"
-FETCH_DELAY = 5          # Delay mỗi user
-DELETE_AFTER_HOURS = 6   # Xóa sau 8 tiếng
-
-os.makedirs(SAVE_DIR, exist_ok=True)
-
+FETCH_DELAY = 2          # Delay mỗi user
 
 class RedditCrawler:
     def __init__(self):
@@ -31,9 +22,8 @@ class RedditCrawler:
         self.data = {"grant_type": "password", "username": USERNAME, "password": PASSWORD}
         self.token = None
         self.headers = None
-        self.get_token()
-        self.setup_database()
         self.user_count = 0
+        self.get_token()
 
     def log(self, msg):
         print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
@@ -59,8 +49,8 @@ class RedditCrawler:
                 self.log(f"Token exception: {e}, retry 30s")
                 time.sleep(30)
 
-    def setup_database(self):
-        conn = sqlite3.connect(DB_PATH)
+    def setup_database(self, db_path):
+        conn = sqlite3.connect(db_path)
         cur = conn.cursor()
         cur.executescript("""
         CREATE TABLE IF NOT EXISTS r_user (
@@ -125,15 +115,21 @@ class RedditCrawler:
                 d = child["data"]
                 if kind == "submitted":
                     items.append({
-                        "id": d["id"], "subreddit": d["subreddit"],
-                        "title": d["title"], "content": d.get("selftext", ""),
+                        "id": d["id"],
+                        "subreddit": d["subreddit"],
+                        "title": d["title"],
+                        "content": d.get("selftext", ""),
                         "p_url": f"https://reddit.com{d['permalink']}",
-                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
+                        "score": d["score"],
+                        "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
                     })
                 else:
                     items.append({
-                        "id": d["id"], "body": d["body"], "subreddit": d["subreddit"],
-                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
+                        "id": d["id"],
+                        "body": d["body"],
+                        "subreddit": d["subreddit"],
+                        "score": d["score"],
+                        "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
                     })
             after = data.get("after")
             if not after:
@@ -154,36 +150,32 @@ class RedditCrawler:
         cur.execute("""
             INSERT OR REPLACE INTO r_user VALUES (?, ?, ?, ?, ?, ?)
         """, (user["username"], user["link_karma"], user["comment_karma"],
-            user["created"], user["premium"], user["verified_email"]))
+              user["created"], user["premium"], user["verified_email"]))
         for p in posts:
             cur.execute("""
                 INSERT OR REPLACE INTO post VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (p["id"], p["subreddit"], p["title"], p["content"], p["p_url"],
-                p["score"], p["created"], username))
+                  p["score"], p["created"], username))
         for c in comments:
             cur.execute("""
                 INSERT OR REPLACE INTO comment VALUES (?, ?, ?, ?, ?, ?)
             """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], username))
         conn.commit()
         conn.close()
-
         self.user_count += 1
         self.log(f"✅ [{self.user_count}/{MAX_USERS}] Đã lưu user: {username}")
 
-
-    def fetch_users_from_subreddit(self):
+    def fetch_users_from_subreddit(self, save_dir="data"):
         self.user_count = 0
-
-        # Tạo file DB mới cho mỗi lần crawl 100 user
-        db_path = os.path.join(SAVE_DIR, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+        db_path = os.path.join(save_dir, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
         self.setup_database(db_path)
-
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
+
         while len(users) < MAX_USERS:
             r = requests.get(url, headers=self.headers, params={"limit": 100})
             if r.status_code != 200:
-                self.log(f"Lỗi {r.status_code}, đợi 30s")
+                self.log(f"Lỗi {r.status_code}, đợi 30s...")
                 time.sleep(30)
                 continue
             for child in r.json()["data"]["children"]:
@@ -193,29 +185,6 @@ class RedditCrawler:
                     self.save_user(author, db_path)
                     if len(users) >= MAX_USERS:
                         self.log(f"🎯 Hoàn thành crawl {len(users)} users.")
-                        self.log(f"💾 Dữ liệu đã lưu trong {db_path}")
-                        return
+                        self.log(f"💾 Dữ liệu lưu trong {db_path}")
+                        return db_path
             time.sleep(FETCH_DELAY)
-
-
-# ===== Dọn file cũ sau 8h =====
-def cleanup_old_db():
-    now = datetime.now()
-    for f in os.listdir(SAVE_DIR):
-        if f.endswith(".db"):
-            path = os.path.join(SAVE_DIR, f)
-            if now - datetime.fromtimestamp(os.path.getmtime(path)) > timedelta(hours=DELETE_AFTER_HOURS):
-                os.remove(path)
-                print(f"[{datetime.now()}] 🗑️ Xóa file cũ: {f}", flush=True)
-
-# ===== Chạy định kỳ mỗi 5 phút =====
-if __name__ == "__main__":
-    crawler = RedditCrawler()
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(crawler.fetch_users_from_subreddit, "interval", minutes=5)
-    scheduler.add_job(cleanup_old_db, "interval", hours=1)
-    scheduler.start()
-
-    print(f"[{datetime.now()}] 🚀 Bắt đầu chạy RedditCrawler")
-    while True:
-        time.sleep(60)
