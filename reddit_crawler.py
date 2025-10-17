@@ -15,7 +15,7 @@ USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 SAVE_DIR = "data"
 DB_PATH = os.path.join(SAVE_DIR, "reddit_data.db")
 
-MAX_USERS = 50
+MAX_USERS = 100
 SUBREDDIT = "all"
 FETCH_DELAY = 5
 
@@ -187,11 +187,11 @@ class RedditCrawler:
                     self.log(f"Đang crawl user: {author}")
                     self.save_user(author)
                     if len(users) >= MAX_USERS:
+                        # Hoàn tất batch
                         self.log(f"✅ Hoàn thành crawl {len(users)} users.")
                         self.export_sql()
-                        return  # hoặc: users = set() nếu muốn crawl batch tiếp theo
+                        return  # thoát hàm sau khi batch xong
             time.sleep(FETCH_DELAY)
-
     def export_sql(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         filename = f"reddit_data_{timestamp}.sql"
