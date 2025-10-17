@@ -13,10 +13,11 @@ crawler = RedditCrawler()
 @app.route("/")
 def home():
     html = """
-    <h2>Reddit SQL Exporter</h2>
-    <p>Hệ thống tự crawl và lưu dữ liệu Reddit vào file <b>reddit_data.sql</b>.</p>
-    <a href='/download'>⬇Tải file SQL</a><br><br>
-    <a href='/show'>Xem 30 dòng cuối của file SQL</a>
+    <div style="display:flex; flex-direction:column; align-items:center; font-family:Arial; margin-top:50px;">
+        <h2>Reddit SQL Exporter</h2>
+        <a href='/download'>Tải file SQL</a><br><br>
+        <a href='/show'>Xem 30 dòng cuối của file SQL</a>
+    </div>
     """
     return html
 
