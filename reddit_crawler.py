@@ -16,7 +16,7 @@ SAVE_DIR = "data"
 DB_PATH = os.path.join(SAVE_DIR, "reddit_data.db")
 SQL_EXPORT = os.path.join(SAVE_DIR, "reddit_data.sql")
 
-MAX_USERS = 10
+MAX_USERS = 50
 SUBREDDIT = "all"
 FETCH_DELAY = 5
 CYCLE_DELAY = 90
