@@ -20,7 +20,7 @@ DB_PATH = os.path.join(SAVE_DIR, f"reddit_data_{datetime.now().strftime('%Y%m%d_
 MAX_USERS = 100          # Mỗi lần lấy 100 user
 SUBREDDIT = "all"
 FETCH_DELAY = 5          # Delay mỗi user
-DELETE_AFTER_HOURS = 8   # Xóa sau 8 tiếng
+DELETE_AFTER_HOURS = 6   # Xóa sau 8 tiếng
 
 os.makedirs(SAVE_DIR, exist_ok=True)
 
@@ -140,7 +140,7 @@ class RedditCrawler:
                 break
         return items
 
-    def save_user(self, username):
+    def save_user(self, username, db_path):
         self.log(f"🔍 Đang tải thông tin user: {username} ...")
         user = self.fetch_user_info(username)
         if not user:
@@ -149,17 +149,17 @@ class RedditCrawler:
         posts = self.fetch_user_content(username, "submitted", 30)
         comments = self.fetch_user_content(username, "comments", 30)
 
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(db_path)
         cur = conn.cursor()
         cur.execute("""
             INSERT OR REPLACE INTO r_user VALUES (?, ?, ?, ?, ?, ?)
         """, (user["username"], user["link_karma"], user["comment_karma"],
-              user["created"], user["premium"], user["verified_email"]))
+            user["created"], user["premium"], user["verified_email"]))
         for p in posts:
             cur.execute("""
                 INSERT OR REPLACE INTO post VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (p["id"], p["subreddit"], p["title"], p["content"], p["p_url"],
-                  p["score"], p["created"], username))
+                p["score"], p["created"], username))
         for c in comments:
             cur.execute("""
                 INSERT OR REPLACE INTO comment VALUES (?, ?, ?, ?, ?, ?)
@@ -170,8 +170,14 @@ class RedditCrawler:
         self.user_count += 1
         self.log(f"✅ [{self.user_count}/{MAX_USERS}] Đã lưu user: {username}")
 
+
     def fetch_users_from_subreddit(self):
         self.user_count = 0
+
+        # Tạo file DB mới cho mỗi lần crawl 100 user
+        db_path = os.path.join(SAVE_DIR, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
+        self.setup_database(db_path)
+
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
         while len(users) < MAX_USERS:
@@ -184,12 +190,13 @@ class RedditCrawler:
                 author = child["data"]["author"]
                 if author not in ("[deleted]", "AutoModerator") and author not in users:
                     users.add(author)
-                    self.save_user(author)
+                    self.save_user(author, db_path)
                     if len(users) >= MAX_USERS:
                         self.log(f"🎯 Hoàn thành crawl {len(users)} users.")
-                        self.log(f"💾 Dữ liệu đã lưu trong {DB_PATH}")
+                        self.log(f"💾 Dữ liệu đã lưu trong {db_path}")
                         return
             time.sleep(FETCH_DELAY)
+
 
 # ===== Dọn file cũ sau 8h =====
 def cleanup_old_db():
