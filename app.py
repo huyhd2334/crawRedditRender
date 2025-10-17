@@ -1,43 +1,25 @@
 from flask import Flask, jsonify, send_file
 import os
-import time
 import threading
+import time
 from datetime import datetime
+from reddit_crawler import RedditCrawler
 
 app = Flask(__name__)
 
 DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-# --- Giả lập hàm crawl data Reddit ---
-def crawl_reddit_data():
-    """Fake crawler, thay bằng crawler thật của bạn"""
-    # Tạo dữ liệu mẫu (bạn có thể thay phần này bằng code crawl Reddit thật)
-    data = [
-        ("post1", "userA", "This is a post about AI"),
-        ("post2", "userB", "Machine Learning is cool!"),
-        ("post3", "userC", "Python for Data Science"),
-    ]
-    return data
+crawler = RedditCrawler()  # Tạo instance toàn cục
 
-
-def export_to_sql():
-    """Tạo file SQL mới mỗi 12h"""
+# --- Hàm chạy định kỳ mỗi 12h ---
+def crawl_periodically():
     while True:
-        now = datetime.now()
-        filename = f"reddit_data_{now.strftime('%Y%m%d_%H%M')}.sql"
-        filepath = os.path.join(DATA_DIR, filename)
-
-        data = crawl_reddit_data()
-
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("CREATE TABLE reddit_posts (id TEXT, user TEXT, content TEXT);\n")
-            for post_id, user, content in data:
-                content = content.replace("'", "''")
-                f.write(f"INSERT INTO reddit_posts VALUES ('{post_id}', '{user}', '{content}');\n")
-
-        print(f"[INFO] Saved {filename}")
-        # Đợi 12h = 43200 giây
+        try:
+            crawler.fetch_users_from_subreddit()
+        except Exception as e:
+            print(f"[ERROR] Crawl failed: {e}")
+        # Lặp lại sau 12h (43200 giây)
         time.sleep(43200)
 
 
@@ -45,13 +27,12 @@ def export_to_sql():
 def home():
     html = """
     <html>
-    <head>
-        <title>Web Reddit SQL Exporter</title>
-    </head>
+    <head><title>Reddit SQL Exporter</title></head>
     <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-        <h2>Reddit SQL Exporter</h2>
+        <h2>📦 Reddit SQL Exporter</h2>
+        <p>Tự động crawl và xuất file SQL mới mỗi 12 giờ.</p>
 
-        <h3>Chọn file SQL để tải:</h3>
+        <h3>Chọn file để tải:</h3>
         <select id="fileSelect" style="padding: 5px; min-width: 250px;"></select>
         <button onclick="downloadSelected()" style="padding: 5px 10px;">Tải file</button>
 
@@ -84,13 +65,14 @@ def home():
 
 @app.route("/list_files")
 def list_files():
+    """Trả danh sách file SQL"""
     files = sorted([f for f in os.listdir(DATA_DIR) if f.endswith(".sql")])
     return jsonify(files)
 
 
 @app.route("/download/<filename>")
 def download_file(filename):
-    """Tải file cụ thể"""
+    """Tải file SQL"""
     path = os.path.join(DATA_DIR, filename)
     if not os.path.exists(path):
         return jsonify({"error": "File không tồn tại"}), 404
@@ -98,8 +80,8 @@ def download_file(filename):
 
 
 if __name__ == "__main__":
-    # Tạo 1 thread nền để crawl và export file mỗi 12h
-    t = threading.Thread(target=export_to_sql, daemon=True)
+    # Thread nền để tự crawl
+    t = threading.Thread(target=crawl_periodically, daemon=True)
     t.start()
 
     app.run(host="0.0.0.0", port=8080)
