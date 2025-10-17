@@ -1,260 +1,44 @@
-from flask import Flask, send_from_directory, render_template_string, abort
+from flask import Flask, send_from_directory, jsonify
+from crawler import RedditCrawler
 import os
-import json
-import sqlite3
-from datetime import datetime
-import io
+import threading
 
 app = Flask(__name__)
 
-# ======================
-# Đường dẫn dữ liệu
-# ======================
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-DB_PATH = os.path.join(DATA_DIR, "data.db")
+SAVE_DIR = "data"
+SQL_EXPORT = os.path.join(SAVE_DIR, "reddit_data.sql")
 
-# ======================
-# HTML Giao diện chính
-# ======================
-
-INDEX_HTML = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Reddit Crawler Data Explorer</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 900px; margin: 24px auto; }
-    h1 { color: #333; }
-    a { color: #1a73e8; text-decoration: none; }
-    table { width:100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { padding: 8px 10px; border-bottom: 1px solid #eee; text-align: left; }
-    .mono { font-family: monospace; color:#444; }
-    .small { color:#666; font-size:0.9em; }
-    .btn { background: #1a73e8; color:white; padding:6px 10px; border-radius:4px; text-decoration:none; }
-  </style>
-</head>
-<body>
-  <h1>📊 Reddit Crawler — Data Explorer</h1>
-
-  <h2>📁 JSON Files</h2>
-  {% if json_files %}
-    <table>
-      <thead><tr><th>#</th><th>User</th><th>File</th><th>Created</th><th>Actions</th></tr></thead>
-      <tbody>
-      {% for f in json_files %}
-        <tr>
-          <td>{{ loop.index }}</td>
-          <td>{{ f.username }}</td>
-          <td class="mono">{{ f.filename }}</td>
-          <td class="small">{{ f.mtime }}</td>
-          <td>
-            <a href="/view/{{ f.filename }}">👁 View</a> |
-            <a href="/download/{{ f.filename }}">⬇ Download</a>
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  {% else %}
-    <p>No JSON user files yet.</p>
-  {% endif %}
-
-  <hr>
-
-  <h2>🧩 SQLite Tables</h2>
-  {% if tables %}
-    <ul>
-      {% for t in tables %}
-        <li><a href="/table/{{ t }}">{{ t }}</a></li>
-      {% endfor %}
-    </ul>
-
-    <p>
-      <a href="/download_db" class="btn">⬇ Download Database (.db)</a>
-      <a href="/export_sql" class="btn">📝 Export SQL Dump</a>
-    </p>
-  {% else %}
-    <p>No SQLite database found at <code>{{ db_path }}</code>.</p>
-  {% endif %}
-</body>
-</html>
-"""
-
-# ======================
-# HTML xem file JSON
-# ======================
-
-VIEW_HTML = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>View {{ filename }}</title>
-  <style>
-    body { font-family: monospace; white-space: pre-wrap; background:#f7f7f9; padding:16px; }
-    .box { background: #fff; padding:16px; border-radius:6px; box-shadow:0 1px 4px rgba(0,0,0,0.05); }
-    a { display:inline-block; margin-bottom:12px; color:#1a73e8; }
-  </style>
-</head>
-<body>
-  <a href="/">← Back to list</a>
-  <div class="box"><pre>{{ content }}</pre></div>
-</body>
-</html>
-"""
-
-# ======================
-# HTML hiển thị bảng SQLite
-# ======================
-
-TABLE_HTML = """
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Table: {{ table }}</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 1200px; margin: 24px auto; }
-    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
-    th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-    th { background: #f2f2f2; }
-    a { color: #1a73e8; text-decoration: none; }
-  </style>
-</head>
-<body>
-  <a href="/">← Back to main</a>
-  <h1>Table: {{ table }}</h1>
-  {% if rows %}
-  <table>
-    <thead>
-      <tr>
-        {% for col in columns %}
-          <th>{{ col }}</th>
-        {% endfor %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in rows %}
-      <tr>
-        {% for col in columns %}
-          <td>{{ row[col] }}</td>
-        {% endfor %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-    <p>No data in this table.</p>
-  {% endif %}
-</body>
-</html>
-"""
-
-# ======================
-# Helper Functions
-# ======================
-
-def list_data_files():
-    """Trả về danh sách file JSON"""
-    if not os.path.isdir(DATA_DIR):
-        return []
-    items = []
-    for name in os.listdir(DATA_DIR):
-        if not name.lower().endswith(".json"):
-            continue
-        path = os.path.join(DATA_DIR, name)
-        stat = os.stat(path)
-        mtime = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-        username = name
-        if name.startswith("user_") and name.endswith(".json"):
-            username = name[len("user_"):-len(".json")]
-        items.append({"filename": name, "username": username, "mtime": mtime})
-    items.sort(key=lambda x: x["mtime"], reverse=True)
-    return items
-
-def list_tables():
-    """Trả về danh sách bảng trong SQLite"""
-    if not os.path.isfile(DB_PATH):
-        return []
-    with sqlite3.connect(DB_PATH) as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        return [r[0] for r in cur.fetchall()]
-
-# ======================
-# Routes
-# ======================
+crawler = RedditCrawler()
 
 @app.route("/")
-def index():
-    files = list_data_files()
-    tables = list_tables()
-    return render_template_string(INDEX_HTML, json_files=files, tables=tables, db_path=DB_PATH)
+def home():
+    html = """
+    <h2>📊 Reddit SQL Exporter</h2>
+    <p>Hệ thống tự crawl và lưu dữ liệu Reddit vào file <b>reddit_data.sql</b>.</p>
+    <a href='/download'>⬇️ Tải file SQL</a><br><br>
+    <a href='/show'>👀 Xem 30 dòng cuối của file SQL</a>
+    """
+    return html
 
-@app.route("/view/<filename>")
-def view_file(filename):
-    safe = os.path.basename(filename)
-    path = os.path.join(DATA_DIR, safe)
-    if not os.path.isfile(path):
-        abort(404)
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        pretty = json.dumps(data, ensure_ascii=False, indent=2)
-    except Exception as e:
-        pretty = f"Error reading file: {e}"
-    return render_template_string(VIEW_HTML, filename=safe, content=pretty)
+@app.route("/download")
+def download_sql():
+    if os.path.exists(SQL_EXPORT):
+        return send_from_directory(SAVE_DIR, "reddit_data.sql", as_attachment=True)
+    return jsonify({"error": "File SQL chưa được tạo."}), 404
 
-@app.route("/download/<filename>")
-def download_file(filename):
-    safe = os.path.basename(filename)
-    return send_from_directory(DATA_DIR, safe, as_attachment=True)
+@app.route("/show")
+def show_sql():
+    if not os.path.exists(SQL_EXPORT):
+        return "<p>⚠️ Chưa có file SQL để hiển thị.</p>"
+    with open(SQL_EXPORT, "r", encoding="utf-8") as f:
+        lines = f.readlines()[-30:]
+    return "<pre>" + "".join(lines) + "</pre>"
 
-@app.route("/table/<table>")
-def show_table(table):
-    if not os.path.isfile(DB_PATH):
-        abort(404)
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        try:
-            cur.execute(f"SELECT * FROM {table}")
-            rows = [dict(r) for r in cur.fetchall()]
-            columns = [d[0] for d in cur.description]
-        except Exception as e:
-            return f"Error reading table {table}: {e}"
-    return render_template_string(TABLE_HTML, table=table, columns=columns, rows=rows)
+def run_crawler():
+    crawler.fetch_users_from_subreddit()
 
-# ======================
-# Download / Export DB
-# ======================
-
-@app.route("/download_db")
-def download_db():
-    """Tải file SQLite"""
-    if not os.path.isfile(DB_PATH):
-        abort(404)
-    return send_from_directory(DATA_DIR, os.path.basename(DB_PATH), as_attachment=True)
-
-@app.route("/export_sql")
-def export_sql():
-    """Xuất toàn bộ database thành file .sql"""
-    if not os.path.isfile(DB_PATH):
-        abort(404)
-    buf = io.StringIO()
-    with sqlite3.connect(DB_PATH) as conn:
-        for line in conn.iterdump():
-            buf.write(f"{line}\n")
-    sql_path = os.path.join(DATA_DIR, "export.sql")
-    with open(sql_path, "w", encoding="utf-8") as f:
-        f.write(buf.getvalue())
-    return send_from_directory(DATA_DIR, "export.sql", as_attachment=True)
-
-# ======================
-# Main
-# ======================
+# Chạy crawler ở thread riêng
+threading.Thread(target=run_crawler, daemon=True).start()
 
 if __name__ == "__main__":
-    os.makedirs(DATA_DIR, exist_ok=True)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    app.run(host="0.0.0.0", port=8080)

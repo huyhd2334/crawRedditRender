@@ -4,8 +4,6 @@ from datetime import datetime
 import time
 import os
 import sqlite3
-import json
-import subprocess
 
 # ===== Cấu hình =====
 CLIENT_ID = "_ZEYwc8FsUUF5MZipFMGzQ"
@@ -51,7 +49,7 @@ class RedditCrawler:
                 if r.status_code == 200:
                     self.token = r.json()["access_token"]
                     self.headers = {"Authorization": f"bearer {self.token}", "User-Agent": USER_AGENT}
-                    self.log("Access token received.")
+                    self.log("✅ Access token received.")
                     break
                 else:
                     self.log(f"Token error {r.status_code}, retry 60s")
@@ -61,6 +59,7 @@ class RedditCrawler:
                 time.sleep(30)
 
     def setup_database(self):
+        """Tạo 4 bảng chính"""
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
 
@@ -72,18 +71,6 @@ class RedditCrawler:
             created TEXT NOT NULL,
             premium INTEGER NOT NULL,
             verified_email INTEGER NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS achievement (
-            achievement_name TEXT PRIMARY KEY
-        );
-
-        CREATE TABLE IF NOT EXISTS user_achievement (
-            username TEXT NOT NULL,
-            achievement_name TEXT NOT NULL,
-            PRIMARY KEY (username, achievement_name),
-            FOREIGN KEY (username) REFERENCES r_user(username),
-            FOREIGN KEY (achievement_name) REFERENCES achievement(achievement_name)
         );
 
         CREATE TABLE IF NOT EXISTS post (
@@ -107,11 +94,19 @@ class RedditCrawler:
             username TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
+
+        CREATE TABLE IF NOT EXISTS achievement (
+            username TEXT NOT NULL,
+            achievement_name TEXT NOT NULL,
+            PRIMARY KEY (username, achievement_name),
+            FOREIGN KEY (username) REFERENCES r_user(username)
+        );
         """)
         conn.commit()
         conn.close()
 
     def fetch_user_info(self, username):
+        """Lấy thông tin user"""
         url = f"https://oauth.reddit.com/user/{username}/about"
         r = requests.get(url, headers=self.headers)
         if r.status_code != 200:
@@ -123,16 +118,16 @@ class RedditCrawler:
             "comment_karma": d.get("comment_karma", 0),
             "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat(),
             "premium": int(d.get("is_gold", False)),
-            "verified_email": int(d.get("has_verified_email", False)),
-            "achievements": [award["name"] for award in d.get("subreddit", {}).get("user_flair_richtext", []) if "name" in award]
+            "verified_email": int(d.get("has_verified_email", False))
         }
 
-    def fetch_user_content(self, username, kind="submitted", limit=100):
+    def fetch_user_content(self, username, kind="submitted", limit=50):
+        """Lấy bài post hoặc comment"""
         url = f"https://oauth.reddit.com/user/{username}/{kind}.json"
         items = []
         after = None
         while len(items) < limit:
-            params = {"limit": 50}
+            params = {"limit": 25}
             if after:
                 params["after"] = after
             r = requests.get(url, headers=self.headers, params=params)
@@ -165,16 +160,18 @@ class RedditCrawler:
         return items
 
     def save_user(self, username):
+        """Lưu user + post + comment"""
         user = self.fetch_user_info(username)
         if not user:
             return
 
-        user["posts"] = self.fetch_user_content(username, "submitted", 50)
-        user["comments"] = self.fetch_user_content(username, "comments", 50)
+        posts = self.fetch_user_content(username, "submitted", 30)
+        comments = self.fetch_user_content(username, "comments", 30)
 
         conn = sqlite3.connect(DB_PATH)
         cur = conn.cursor()
 
+        # user
         cur.execute("""
             INSERT OR REPLACE INTO r_user (username, link_karma, comment_karma, created, premium, verified_email)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -183,44 +180,39 @@ class RedditCrawler:
             user["created"], user["premium"], user["verified_email"]
         ))
 
-        # achievements
-        for ach in user.get("achievements", []):
-            cur.execute("INSERT OR IGNORE INTO achievement (achievement_name) VALUES (?)", (ach,))
-            cur.execute("""
-                INSERT OR IGNORE INTO user_achievement (username, achievement_name)
-                VALUES (?, ?)
-            """, (user["username"], ach))
-
         # posts
-        for p in user["posts"]:
+        for p in posts:
             cur.execute("""
                 INSERT OR REPLACE INTO post (id, subreddit, title, content, p_url, score, created, username)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (p["id"], p["subreddit"], p["title"], p["content"], p["p_url"], p["score"], p["created"], user["username"]))
+            """, (p["id"], p["subreddit"], p["title"], p["content"], p["p_url"],
+                  p["score"], p["created"], username))
 
         # comments
-        for c in user["comments"]:
+        for c in comments:
             cur.execute("""
                 INSERT OR REPLACE INTO comment (id, body, subreddit, score, created, username)
                 VALUES (?, ?, ?, ?, ?, ?)
-            """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], user["username"]))
+            """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], username))
 
         conn.commit()
         conn.close()
-
-        self.log(f"Đã lưu xong user {username}")
+        self.log(f"Đã lưu user {username}")
 
     def export_sql(self):
+        """Xuất database thành file .sql"""
         conn = sqlite3.connect(DB_PATH)
         with open(SQL_EXPORT, "w", encoding="utf-8") as f:
             for line in conn.iterdump():
                 f.write(f"{line}\n")
         conn.close()
-        self.log(f"Đã xuất file SQL: {SQL_EXPORT}")
+        self.log(f"📦 Đã xuất file SQL: {SQL_EXPORT}")
 
     def fetch_users_from_subreddit(self):
+        """Crawl user từ subreddit"""
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
+
         while len(users) < MAX_USERS:
             try:
                 r = requests.get(url, headers=self.headers, params={"limit": 100})
@@ -230,7 +222,7 @@ class RedditCrawler:
                 continue
 
             if r.status_code != 200:
-                self.log(f"Lỗi {r.status_code} khi tải subreddit, chờ 30s")
+                self.log(f"Lỗi {r.status_code}, chờ 30s")
                 time.sleep(30)
                 continue
 
@@ -245,11 +237,4 @@ class RedditCrawler:
             time.sleep(FETCH_DELAY)
 
         self.export_sql()
-        self.log(f"Hoàn thành crawl {len(users)} users.")
-
-# ===== RUN =====
-if __name__ == "__main__":
-    crawler = RedditCrawler()
-    while True:
-        crawler.fetch_users_from_subreddit()
-        time.sleep(CYCLE_DELAY)
+        self.log(f"✅ Hoàn thành crawl {len(users)} users.")
