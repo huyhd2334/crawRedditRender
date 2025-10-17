@@ -31,6 +31,7 @@ class RedditCrawler:
         self.headers = None
         self.get_token()
         self.setup_database()
+        
 
     def log(self, msg):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -200,13 +201,18 @@ class RedditCrawler:
         self.log(f"Đã lưu user {username}")
 
     def export_sql(self):
-        """Xuất database thành file .sql"""
+        """Xuất database thành file .sql mới mỗi 12h"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        filename = f"reddit_data_{timestamp}.sql"
+        path = os.path.join(SAVE_DIR, filename)
+
         conn = sqlite3.connect(DB_PATH)
-        with open(SQL_EXPORT, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             for line in conn.iterdump():
                 f.write(f"{line}\n")
         conn.close()
-        self.log(f"📦 Đã xuất file SQL: {SQL_EXPORT}")
+
+        self.log(f"📦 Đã xuất file SQL mới: {filename}")
 
     def fetch_users_from_subreddit(self):
         """Crawl user từ subreddit"""
