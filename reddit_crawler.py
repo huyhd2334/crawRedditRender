@@ -190,6 +190,7 @@ class RedditCrawler:
                         break
             time.sleep(FETCH_DELAY)
         self.log(f"✅ Hoàn thành crawl {len(users)} users.")
+        self.export_sql()
 
     def export_sql(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
