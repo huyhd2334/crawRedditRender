@@ -32,7 +32,7 @@ class RedditCrawler:
 
     def log(self, msg):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{now}] {msg}")
+        print(f"[{now}] {msg}", flush=True)  # flush=True để log xuất ngay
 
     def get_token(self):
         while True:
@@ -187,11 +187,11 @@ class RedditCrawler:
                     self.log(f"Đang crawl user: {author}")
                     self.save_user(author)
                     if len(users) >= MAX_USERS:
-                        # Hoàn tất batch
                         self.log(f"✅ Hoàn thành crawl {len(users)} users.")
                         self.export_sql()
-                        return  # thoát hàm sau khi batch xong
+                        return
             time.sleep(FETCH_DELAY)
+
     def export_sql(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         filename = f"reddit_data_{timestamp}.sql"
