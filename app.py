@@ -29,8 +29,8 @@ def home():
     <html>
     <head><title>Reddit SQL Exporter</title></head>
     <body style="font-family: sans-serif; text-align: center; margin-top: 50px;">
-        <h2>📦 Reddit SQL Exporter</h2>
-        <p>Tự động crawl và xuất file SQL mới mỗi 12 giờ.</p>
+        <h2>Reddit SQL Exporter</h2>
+        <p>Auto crawl và xuất file SQL mới mỗi 12 giờ.</p>
 
         <h3>Chọn file để tải:</h3>
         <select id="fileSelect" style="padding: 5px; min-width: 250px;"></select>
