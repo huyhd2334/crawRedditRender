@@ -1,5 +1,5 @@
 from flask import Flask, send_from_directory, jsonify
-from crawler import RedditCrawler
+from reddit_crawler import RedditCrawler
 import os
 import threading
 
