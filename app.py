@@ -24,7 +24,7 @@ def home():
     </head>
     <body>
         <h2>Reddit SQL Exporter</h2>
-        <p>Hệ thống tự crawl và lưu dữ liệu Reddit. Click để tải file SQL.</p>
+        <p>auto crawler sys</p>
         <table>
             <tr><th>File SQL</th><th>Download</th></tr>
             {% for f in files %}
