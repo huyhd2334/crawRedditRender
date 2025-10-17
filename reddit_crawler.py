@@ -29,10 +29,11 @@ class RedditCrawler:
         self.headers = None
         self.get_token()
         self.setup_database()
+        self.user_count = 0  # Đếm số user đã load
 
     def log(self, msg):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{now}] {msg}", flush=True)  # flush=True để log xuất ngay
+        print(f"[{now}] {msg}", flush=True)
 
     def get_token(self):
         while True:
@@ -87,12 +88,6 @@ class RedditCrawler:
             username TEXT NOT NULL,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
-        CREATE TABLE IF NOT EXISTS achievement (
-            username TEXT NOT NULL,
-            achievement_name TEXT NOT NULL,
-            PRIMARY KEY (username, achievement_name),
-            FOREIGN KEY (username) REFERENCES r_user(username)
-        );
         """)
         conn.commit()
         conn.close()
@@ -143,8 +138,10 @@ class RedditCrawler:
         return items
 
     def save_user(self, username):
+        self.log(f"🔍 Đang tải thông tin user: {username} ...")
         user = self.fetch_user_info(username)
         if not user:
+            self.log(f"⚠️ Không thể lấy dữ liệu user: {username}")
             return
         posts = self.fetch_user_content(username, "submitted", 30)
         comments = self.fetch_user_content(username, "comments", 30)
@@ -169,7 +166,9 @@ class RedditCrawler:
             """, (c["id"], c["body"], c["subreddit"], c["score"], c["created"], username))
         conn.commit()
         conn.close()
-        self.log(f"✅ Lưu user {username}")
+
+        self.user_count += 1
+        self.log(f"✅ [{self.user_count}/{MAX_USERS}] Đã lưu user: {username}")
 
     def fetch_users_from_subreddit(self):
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
@@ -184,21 +183,13 @@ class RedditCrawler:
                 author = child["data"]["author"]
                 if author not in ("[deleted]", "AutoModerator") and author not in users:
                     users.add(author)
-                    self.log(f"Đang crawl user: {author}")
                     self.save_user(author)
                     if len(users) >= MAX_USERS:
-                        self.log(f"✅ Hoàn thành crawl {len(users)} users.")
-                        self.export_sql()
+                        self.log(f"🎯 Hoàn thành crawl {len(users)} users.")
+                        self.log(f"💾 Dữ liệu đã lưu trong {DB_PATH}")
                         return
             time.sleep(FETCH_DELAY)
 
-    def export_sql(self):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-        filename = f"reddit_data_{timestamp}.sql"
-        path = os.path.join(SAVE_DIR, filename)
-        conn = sqlite3.connect(DB_PATH)
-        with open(path, "w", encoding="utf-8") as f:
-            for line in conn.iterdump():
-                f.write(f"{line}\n")
-        conn.close()
-        self.log(f"📦 Đã xuất file SQL mới: {filename}")
+if __name__ == "__main__":
+    crawler = RedditCrawler()
+    crawler.fetch_users_from_subreddit()
