@@ -33,7 +33,7 @@ threading.Thread(target=start_crawler, daemon=True).start()
 # ===== Scheduler định kỳ =====
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: crawler.fetch_users_from_subreddit(SAVE_DIR), 'interval', hours=6)
-scheduler.add_job(lambda: cleanup_old_db(SAVE_DIR), 'interval', hours=1)
+scheduler.add_job(lambda: cleanup_old_db(SAVE_DIR), 'interval', minutes=5)
 scheduler.start()
 
 # ===== Flask Routes =====
