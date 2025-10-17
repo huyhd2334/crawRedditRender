@@ -5,6 +5,7 @@ import time
 import os
 import sqlite3
 from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime
 
 # ===== Cấu hình =====
 CLIENT_ID = "_ZEYwc8FsUUF5MZipFMGzQ"
@@ -14,7 +15,7 @@ PASSWORD = "huyhd2334"
 USER_AGENT = "RedditCrawler/1.0 by u/Creative-Umpire1404"
 
 SAVE_DIR = "data"
-DB_PATH = os.path.join(SAVE_DIR, "reddit_data.db")
+DB_PATH = os.path.join(SAVE_DIR, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
 
 MAX_USERS = 100          # Mỗi lần lấy 100 user
 SUBREDDIT = "all"
