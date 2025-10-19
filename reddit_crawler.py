@@ -80,24 +80,37 @@ class RedditCrawler:
             username TEXT,
             FOREIGN KEY (username) REFERENCES r_user(username)
         );
+        CREATE TABLE IF NOT EXISTS achievement (
+            achievement_name TEXT PRIMARY KEY
+        );
+        CREATE TABLE IF NOT EXISTS user_achievement (
+            username TEXT NOT NULL,
+            achievement_name TEXT NOT NULL,
+            PRIMARY KEY (username, achievement_name),
+            FOREIGN KEY (username) REFERENCES r_user(username),
+            FOREIGN KEY (achievement_name) REFERENCES achievement(achievement_name)
+        );
         """)
         conn.commit()
         conn.close()
 
     def fetch_user_info(self, username):
         url = f"https://oauth.reddit.com/user/{username}/about"
-        r = requests.get(url, headers=self.headers)
-        if r.status_code != 200:
+        try:
+            r = requests.get(url, headers=self.headers)
+            if r.status_code != 200:
+                return None
+            d = r.json()["data"]
+            return {
+                "username": d["name"],
+                "link_karma": d.get("link_karma", 0),
+                "comment_karma": d.get("comment_karma", 0),
+                "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat(),
+                "premium": int(d.get("is_gold", False)),
+                "verified_email": int(d.get("has_verified_email", False))
+            }
+        except:
             return None
-        d = r.json()["data"]
-        return {
-            "username": d["name"],
-            "link_karma": d.get("link_karma", 0),
-            "comment_karma": d.get("comment_karma", 0),
-            "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat(),
-            "premium": int(d.get("is_gold", False)),
-            "verified_email": int(d.get("has_verified_email", False))
-        }
 
     def fetch_user_content(self, username, kind="submitted", limit=50):
         url = f"https://oauth.reddit.com/user/{username}/{kind}.json"
@@ -106,28 +119,70 @@ class RedditCrawler:
             params = {"limit": 25}
             if after:
                 params["after"] = after
-            r = requests.get(url, headers=self.headers, params=params)
-            if r.status_code != 200:
-                break
-            data = r.json()["data"]
-            for child in data["children"]:
-                d = child["data"]
-                if kind == "submitted":
-                    items.append({
-                        "id": d["id"], "subreddit": d["subreddit"],
-                        "title": d["title"], "content": d.get("selftext", ""),
-                        "p_url": f"https://reddit.com{d['permalink']}",
-                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
-                    })
-                else:
-                    items.append({
-                        "id": d["id"], "body": d["body"], "subreddit": d["subreddit"],
-                        "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
-                    })
-            after = data.get("after")
-            if not after:
+            try:
+                r = requests.get(url, headers=self.headers, params=params)
+                if r.status_code != 200:
+                    break
+                data = r.json()["data"]
+                for child in data["children"]:
+                    d = child["data"]
+                    if kind == "submitted":
+                        items.append({
+                            "id": d["id"], "subreddit": d["subreddit"],
+                            "title": d["title"], "content": d.get("selftext", ""),
+                            "p_url": f"https://reddit.com{d['permalink']}",
+                            "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
+                        })
+                    else:
+                        items.append({
+                            "id": d["id"], "body": d["body"], "subreddit": d["subreddit"],
+                            "score": d["score"], "created": datetime.utcfromtimestamp(d["created_utc"]).isoformat()
+                        })
+                after = data.get("after")
+                if not after:
+                    break
+            except:
                 break
         return items
+
+    def get_user_achievement(self, username, db_path):
+        self.log(f"🔹 Lấy achievement của {username} ...")
+        trophies_url = f"https://oauth.reddit.com/api/v1/user/{username}/trophies.json"
+        while True:
+            try:
+                r = requests.get(trophies_url, headers=self.headers)
+                if r.status_code != 200:
+                    self.log(f"Lỗi {r.status_code} khi lấy achievement, đợi 60s")
+                    if r.status_code == 401:
+                        self.get_token()
+                    time.sleep(60)
+                    continue
+                break
+            except Exception as e:
+                self.log(f"Exception khi lấy achievement: {e}, đợi 30s")
+                time.sleep(30)
+
+        trophies = r.json()["data"]["trophies"]
+
+        if not trophies:
+            self.log("  Không có achievement nào.")
+            return
+
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        for t in trophies:
+            trophy_name = t["data"]["name"]
+            try:
+                cur.execute("INSERT OR IGNORE INTO achievement (achievement_name) VALUES (?)", (trophy_name,))
+                cur.execute(
+                    "INSERT OR IGNORE INTO user_achievement (username, achievement_name) VALUES (?, ?)",
+                    (username, trophy_name)
+                )
+            except Exception as e:
+                self.log(f"Lỗi lưu achievement: {e}")
+        conn.commit()
+        conn.close()
+        self.log(f"✅ Lưu achievement cho {username} xong.")
 
     def save_user(self, username, db_path):
         self.log(f"🔍 Đang tải thông tin user: {username} ...")
@@ -135,6 +190,7 @@ class RedditCrawler:
         if not user:
             self.log(f"⚠️ Không thể lấy dữ liệu user: {username}")
             return
+
         posts = self.fetch_user_content(username, "submitted", 30)
         comments = self.fetch_user_content(username, "comments", 30)
 
@@ -156,6 +212,9 @@ class RedditCrawler:
         conn.commit()
         conn.close()
 
+        # Lưu achievement sau khi lưu user xong
+        self.get_user_achievement(username, db_path)
+
     def fetch_users_from_subreddit(self, save_dir):
         db_path = os.path.join(save_dir, f"reddit_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db")
         self.setup_database(db_path)
@@ -165,19 +224,23 @@ class RedditCrawler:
         url = f"https://oauth.reddit.com/r/{SUBREDDIT}/new.json"
         users = set()
         while len(users) < MAX_USERS:
-            r = requests.get(url, headers=self.headers, params={"limit": 100})
-            if r.status_code != 200:
-                self.log(f"Lỗi {r.status_code}, đợi 30s")
+            try:
+                r = requests.get(url, headers=self.headers, params={"limit": 100})
+                if r.status_code != 200:
+                    self.log(f"Lỗi {r.status_code}, đợi 30s")
+                    time.sleep(30)
+                    continue
+                for child in r.json()["data"]["children"]:
+                    author = child["data"]["author"]
+                    if author not in ("[deleted]", "AutoModerator") and author not in users:
+                        users.add(author)
+                        self.save_user(author, db_path)
+                        user_count += 1
+                        if len(users) >= MAX_USERS:
+                            self.log(f"🎯 Hoàn thành crawl {len(users)} user.")
+                            self.log(f"💾 Dữ liệu lưu trong {db_path}")
+                            return
+                time.sleep(FETCH_DELAY)
+            except Exception as e:
+                self.log(f"Exception khi crawl subreddit: {e}, đợi 30s")
                 time.sleep(30)
-                continue
-            for child in r.json()["data"]["children"]:
-                author = child["data"]["author"]
-                if author not in ("[deleted]", "AutoModerator") and author not in users:
-                    users.add(author)
-                    self.save_user(author, db_path)
-                    user_count += 1
-                    if len(users) >= MAX_USERS:
-                        self.log(f"🎯 Hoàn thành crawl {len(users)} user.")
-                        self.log(f"💾 Dữ liệu lưu trong {db_path}")
-                        return
-            time.sleep(FETCH_DELAY)

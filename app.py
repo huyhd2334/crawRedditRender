@@ -12,7 +12,6 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 app = Flask(__name__)
 crawler = RedditCrawler()
 
-# ===== Xóa DB cũ > 6h =====
 def cleanup_old_db():
     now = datetime.now()
     for f in os.listdir(SAVE_DIR):
@@ -22,7 +21,6 @@ def cleanup_old_db():
                 os.remove(path)
                 print(f"[{datetime.now()}] 🗑️ Xóa DB cũ: {f}", flush=True)
 
-# ===== Thread crawl batch đầu tiên ngay khi start Flask =====
 def start_first_batch():
     crawler.log("🚀 Bắt đầu crawl batch đầu tiên...")
     crawler.fetch_users_from_subreddit(SAVE_DIR)
@@ -30,13 +28,11 @@ def start_first_batch():
 
 threading.Thread(target=start_first_batch, daemon=True).start()
 
-# ===== Scheduler định kỳ =====
 scheduler = BackgroundScheduler()
 scheduler.add_job(lambda: crawler.fetch_users_from_subreddit(SAVE_DIR), 'interval', minutes=5)
 scheduler.add_job(cleanup_old_db, 'interval', minutes=5)
 scheduler.start()
 
-# ===== Routes =====
 @app.route("/")
 def home():
     files = sorted([f for f in os.listdir(SAVE_DIR) if f.endswith(".db")], reverse=True)
