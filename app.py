@@ -1,9 +1,11 @@
-from flask import Flask, send_from_directory
+from flask import Flask, send_from_directory, send_file
 from apscheduler.schedulers.background import BackgroundScheduler
 from reddit_crawler import RedditCrawler
 from datetime import datetime, timedelta
 import os
 import threading
+import zipfile
+import io
 
 SAVE_DIR = "data"
 DELETE_AFTER_HOURS = 6
@@ -33,22 +35,42 @@ scheduler.add_job(lambda: crawler.fetch_users_from_subreddit(SAVE_DIR), 'interva
 scheduler.add_job(cleanup_old_db, 'interval', minutes=5)
 scheduler.start()
 
+
 @app.route("/")
 def home():
     files = sorted([f for f in os.listdir(SAVE_DIR) if f.endswith(".db")], reverse=True)
     if not files:
         return "<h2>📊 Chưa có dữ liệu nào. Hệ thống đang khởi động...</h2>"
+    
     file_links = "".join([f"<li>{f} <a href='/download/{f}'>⬇️ Download</a></li>" for f in files])
     return f"""
-    <div style='text-align:center;'>
+    <div style='text-align:center; font-family:sans-serif;'>
         <h2>📊 Reddit Data Exporter (.db)</h2>
-        <ul style='list-style:none; padding-left:0;'>{file_links}</ul>
+        <button onclick="window.location.href='/download_all'" 
+                style='padding:10px 20px; border:none; background:#007bff; color:white; border-radius:6px; cursor:pointer;'>
+            ⬇️ Download All (.zip)
+        </button>
+        <ul style='list-style:none; padding-left:0; margin-top:20px;'>{file_links}</ul>
     </div>
     """
+
 
 @app.route("/download/<filename>")
 def download(filename):
     return send_from_directory(SAVE_DIR, filename, as_attachment=True)
+
+
+@app.route("/download_all")
+def download_all():
+    # Tạo file ZIP tạm thời trong bộ nhớ
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for f in os.listdir(SAVE_DIR):
+            if f.endswith(".db"):
+                zipf.write(os.path.join(SAVE_DIR, f), arcname=f)
+    zip_buffer.seek(0)
+    return send_file(zip_buffer, mimetype='application/zip', as_attachment=True, download_name='reddit_dbs.zip')
+
 
 # ===== Run Flask =====
 if __name__ == "__main__":
